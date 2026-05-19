@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+:root {
+  --background: #010828;
+  --foreground: #eff4ff;
+  --cream: #eff4ff;
+  --neon: #6fff00;
+  --font-grotesk: "Anton", sans-serif;
+  --font-condiment: "Condiment", cursive;
+  --font-schibsted: "Schibsted Grotesk", sans-serif;
+  --font-inter: "Inter", sans-serif;
+  --font-noto-sans: "Noto Sans", sans-serif;
+  --font-fustat: "Fustat", sans-serif;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-cream: var(--cream);
+  --color-neon: var(--neon);
+  --font-sans: var(--font-grotesk);
+  --font-grotesk: var(--font-grotesk);
+  --font-condiment: var(--font-condiment);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-grotesk);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.liquid-glass {
+  background: rgba(255, 255, 255, 0.01);
+  background-blend-mode: luminosity;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: none;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.liquid-glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.4px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.45) 0%,
+    rgba(255, 255, 255, 0.15) 20%,
+    rgba(255, 255, 255, 0) 40%,
+    rgba(255, 255, 255, 0) 60%,
+    rgba(255, 255, 255, 0.15) 80%,
+    rgba(255, 255, 255, 0.45) 100%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.space-texture {
+  background-image: url("/texture.png");
+  background-size: cover;
+  background-position: center;
+  mix-blend-mode: lighten;
+}
+
+.chat-panel {
+  background: rgba(1, 8, 40, 0.78);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.chat-bubble-assistant-gray,
+.chat-bubble-assistant-cream-ring,
+.chat-bubble-assistant-dark {
+  font-weight: 500;
+  line-height: 1.65;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+.chat-bubble-assistant-gray {
+  background: #f0f2f8;
+  color: #010828;
+}
+
+.chat-bubble-assistant-cream-ring {
+  background: #eff4ff;
+  color: #010828;
+}
+
+.chat-bubble-assistant-dark {
+  background: #010828;
+  color: #eff4ff;
+}
