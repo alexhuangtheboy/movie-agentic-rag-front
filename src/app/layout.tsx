@@ -39,8 +39,8 @@ const fustat = Fustat({
 });
 
 export const metadata: Metadata = {
-  title: "Movie Agentic RAG",
-  description: "Movie recommendation chat and AI tools.",
+  title: "Apex",
+  description: "Movie recommendations, AI transcription, and box office insights.",
 };
 
 export default function RootLayout({

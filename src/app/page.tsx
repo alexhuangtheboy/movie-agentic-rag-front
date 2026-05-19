@@ -22,6 +22,11 @@ type ChatApiResponse = {
 };
 
 const FALLBACK_ERROR = "Failed to fetch recommendations. Please try again.";
+const SUGGESTED_QUESTIONS = [
+  "Tell me 5 movies after 2020 with rating over 9",
+  "Tell me movies with plot of hero and action",
+  "Tell me who acted in The Loves of Edgar Allan Poe",
+];
 
 /** Switch assistant bubble style: "gray" | "cream-ring" | "dark-solid" */
 type AssistantBubbleVariant = "gray" | "cream-ring" | "dark-solid";
@@ -128,9 +133,8 @@ function ChatView({
     [chatHistory],
   );
 
-  const handleChatSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const query = input.trim();
+  const submitChatQuery = async (rawQuery: string) => {
+    const query = rawQuery.trim();
     if (!query || isLoading) {
       return;
     }
@@ -171,6 +175,11 @@ function ChatView({
     }
   };
 
+  const handleChatSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void submitChatQuery(input);
+  };
+
   const hasConversation = chatHistory.length > 0;
   const characterCount = input.length;
 
@@ -200,22 +209,6 @@ function ChatView({
           >
             Apex
           </button>
-          <div className="hidden items-center gap-5 md:flex">
-            <button
-              type="button"
-              onClick={onBackToLanding}
-              className="cursor-pointer text-sm font-medium text-cream transition hover:text-neon"
-              style={{ fontFamily: "var(--font-schibsted)" }}
-            >
-              MovieGPT
-            </button>
-            <button type="button" className="text-sm font-medium text-cream/80 transition hover:text-neon" style={{ fontFamily: "var(--font-schibsted)" }}>
-              AI Transcriber
-            </button>
-            <button type="button" className="text-sm font-medium text-cream/80 transition hover:text-neon" style={{ fontFamily: "var(--font-schibsted)" }}>
-              Movie Box Office Prediction
-            </button>
-          </div>
           <div className="w-[86px]" />
         </nav>
 
@@ -231,11 +224,26 @@ function ChatView({
               </div>
 
               <h1 className="text-center font-grotesk text-4xl uppercase leading-none text-cream sm:text-5xl md:text-[64px]">
-                MovieGPT
+                Apex
               </h1>
               <p className="mt-5 w-full max-w-[736px] text-center font-mono text-base text-cream/70 sm:text-lg">
-                Ask for personalized movie recommendations, explore AI transcription, or predict box office performance from one intelligent workspace.
+                Ask for personalized movie recommendations from one intelligent workspace.
               </p>
+
+              <div className="mt-8 grid w-full max-w-[860px] gap-3 sm:grid-cols-3">
+                {SUGGESTED_QUESTIONS.map((question) => (
+                  <button
+                    key={question}
+                    type="button"
+                    onClick={() => void submitChatQuery(question)}
+                    disabled={isLoading}
+                    className="liquid-glass rounded-2xl px-4 py-4 text-left font-medium text-cream/90 transition hover:-translate-y-0.5 hover:bg-white/10 hover:text-neon focus:outline-none focus:ring-2 focus:ring-neon/60 disabled:cursor-not-allowed disabled:opacity-60"
+                    style={{ fontFamily: "var(--font-noto-sans)" }}
+                  >
+                    {question}
+                  </button>
+                ))}
+              </div>
             </>
           )}
 
