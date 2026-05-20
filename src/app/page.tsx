@@ -10,6 +10,11 @@ type ChatMessage = {
   content: string;
 };
 
+type ThinkingStep = {
+  node: string | null;
+  reasoning: string;
+};
+
 type ChatApiResponse = {
   task_id?: string;
   thread_id?: string;
@@ -18,8 +23,19 @@ type ChatApiResponse = {
   reasoning?: string | null;
   success?: boolean | null;
   routing?: Record<string, unknown> | null;
+  stream?: boolean;
   error?: string;
 };
+
+type StreamEvent =
+  | { type: "step"; node: string | null; reasoning: string | null }
+  | {
+      type: "completed";
+      answer: string | null;
+      reasoning?: string | null;
+      success?: boolean | null;
+    }
+  | { type: "failed"; answer: string | null; reasoning?: string | null };
 
 const FALLBACK_ERROR = "Failed to fetch recommendations. Please try again.";
 const SUGGESTED_QUESTIONS = [
@@ -114,6 +130,13 @@ type ChatViewProps = {
   setChatHistory: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
 };
 
+function formatNodeLabel(node: string | null): string {
+  if (!node) {
+    return "Agent";
+  }
+  return node.replace(/_/g, " ");
+}
+
 function ChatView({
   onBackToLanding,
   input,
@@ -124,6 +147,8 @@ function ChatView({
   chatHistory,
   setChatHistory,
 }: ChatViewProps) {
+  const [thinkingSteps, setThinkingSteps] = useState<ThinkingStep[]>([]);
+
   const historyMessages = useMemo(
     () =>
       chatHistory
@@ -133,6 +158,20 @@ function ChatView({
     [chatHistory],
   );
 
+  const appendThinkingStep = (node: string | null, reasoning: string | null) => {
+    const text = reasoning?.trim();
+    if (!text) {
+      return;
+    }
+    setThinkingSteps((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.node === node && last.reasoning === text) {
+        return prev;
+      }
+      return [...prev, { node, reasoning: text }];
+    });
+  };
+
   const submitChatQuery = async (rawQuery: string) => {
     const query = rawQuery.trim();
     if (!query || isLoading) {
@@ -141,7 +180,10 @@ function ChatView({
 
     setInput("");
     setIsLoading(true);
+    setThinkingSteps([]);
     setChatHistory((prev) => [...prev, { role: "user", content: query }]);
+
+    const streamRef: { source: EventSource | null } = { source: null };
 
     try {
       const response = await fetch("/api/chat", {
@@ -152,7 +194,7 @@ function ChatView({
         body: JSON.stringify({
           query,
           top_k: 5,
-          stream: false,
+          stream: true,
           chat_id: chatId,
           chat_history_messages: [...historyMessages, query],
         }),
@@ -160,10 +202,83 @@ function ChatView({
 
       const data: ChatApiResponse = await response.json();
 
+      if (!response.ok || data.status === "failed") {
+        const message =
+          typeof data.error === "string" && data.error.trim()
+            ? data.error
+            : typeof data.answer === "string" && data.answer.trim()
+              ? data.answer
+              : FALLBACK_ERROR;
+        setChatHistory((prev) => [...prev, { role: "system", content: message }]);
+        return;
+      }
+
+      if (data.stream && data.status === "running" && data.task_id) {
+        const taskId = data.task_id;
+
+        await new Promise<void>((resolve, reject) => {
+          const source = new EventSource(`/api/chat/stream?task_id=${encodeURIComponent(taskId)}`);
+          streamRef.source = source;
+
+          source.onmessage = (messageEvent) => {
+            try {
+              const payload = JSON.parse(messageEvent.data) as StreamEvent;
+              if (payload.type === "step") {
+                appendThinkingStep(payload.node, payload.reasoning);
+                return;
+              }
+              if (payload.type === "completed") {
+                source.close();
+                streamRef.source = null;
+                const answer = payload.answer?.trim() ?? "";
+                if (answer && payload.success !== false) {
+                  setChatHistory((prev) => [...prev, { role: "assistant", content: answer }]);
+                } else {
+                  setChatHistory((prev) => [...prev, { role: "system", content: FALLBACK_ERROR }]);
+                }
+                resolve();
+                return;
+              }
+              if (payload.type === "failed") {
+                source.close();
+                streamRef.source = null;
+                const message = payload.answer?.trim() || payload.reasoning?.trim() || FALLBACK_ERROR;
+                setChatHistory((prev) => [...prev, { role: "system", content: message }]);
+                resolve();
+              }
+            } catch {
+              source.close();
+              streamRef.source = null;
+              reject(new Error("Invalid stream payload"));
+            }
+          };
+
+          source.onerror = () => {
+            source.close();
+            streamRef.source = null;
+            reject(new Error("Lost connection to progress stream"));
+          };
+        }).catch(() => {
+          setChatHistory((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content:
+                "Lost live progress stream. Ensure Render WEBHOOK_URL is https://movieapex.space/api/movie-webhook and redeploy both services.",
+            },
+          ]);
+        });
+
+        return;
+      }
+
       const hasAnswer = typeof data.answer === "string" && data.answer.trim().length > 0;
       const isSuccess = data.status === "completed" && data.success !== false && hasAnswer;
 
       if (isSuccess) {
+        if (data.reasoning?.trim()) {
+          appendThinkingStep("agent", data.reasoning);
+        }
         setChatHistory((prev) => [...prev, { role: "assistant", content: data.answer as string }]);
       } else {
         setChatHistory((prev) => [...prev, { role: "system", content: FALLBACK_ERROR }]);
@@ -171,6 +286,7 @@ function ChatView({
     } catch {
       setChatHistory((prev) => [...prev, { role: "system", content: FALLBACK_ERROR }]);
     } finally {
+      streamRef.source?.close();
       setIsLoading(false);
     }
   };
@@ -245,6 +361,33 @@ function ChatView({
                 ))}
               </div>
             </>
+          )}
+
+          {(isLoading || thinkingSteps.length > 0) && (
+            <div
+              className="mb-4 w-full max-w-[860px] rounded-2xl border border-neon/25 bg-black/40 p-4 backdrop-blur-sm"
+              aria-live="polite"
+            >
+              <p className="mb-3 font-mono text-xs uppercase tracking-wide text-neon">Agent progress</p>
+              <ol className="flex max-h-48 flex-col gap-2 overflow-y-auto">
+                {thinkingSteps.length === 0 ? (
+                  <li className="font-mono text-sm text-cream/60">Waiting for webhook updates from the movie agent…</li>
+                ) : (
+                  thinkingSteps.map((step, index) => (
+                    <li
+                      key={`${step.node ?? "step"}-${index}`}
+                      className="rounded-lg bg-white/5 px-3 py-2 text-sm text-cream/85"
+                      style={{ fontFamily: "var(--font-noto-sans)" }}
+                    >
+                      <span className="mb-1 block font-mono text-[11px] uppercase text-neon/90">
+                        {formatNodeLabel(step.node)}
+                      </span>
+                      {step.reasoning}
+                    </li>
+                  ))
+                )}
+              </ol>
+            </div>
           )}
 
           {hasConversation && (

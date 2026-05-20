@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
-const BACKEND_URL = "https://movie-agentic-rag.onrender.com/movie/query";
-const REQUEST_TIMEOUT_MS = 60_000;
+const BACKEND_URL =
+  process.env.MOVIE_BACKEND_URL?.trim() || "https://movie-agentic-rag.onrender.com/movie/query";
+const START_TIMEOUT_MS = Number(process.env.MOVIE_BACKEND_START_TIMEOUT_MS ?? "30000");
 
 type ClientPayload = {
   query?: string;
@@ -36,13 +37,15 @@ export async function POST(request: Request) {
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), START_TIMEOUT_MS);
 
   const topKInput = typeof payload.top_k === "number" ? payload.top_k : 5;
   const topK = Math.max(1, Math.min(20, Math.floor(topKInput)));
   const history = Array.isArray(payload.chat_history_messages)
     ? payload.chat_history_messages.filter((entry): entry is string => typeof entry === "string")
     : [];
+
+  const useStream = payload.stream !== false;
 
   try {
     const upstream = await fetch(BACKEND_URL, {
@@ -53,7 +56,7 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         query,
         top_k: topK,
-        stream: false,
+        stream: useStream,
         chat_id: payload.chat_id ?? null,
         user_id: payload.user_id ?? null,
         chat_history_messages: history,
@@ -75,6 +78,29 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!upstream.ok) {
+      return NextResponse.json(
+        {
+          status: "failed",
+          task_id: result.task_id ?? null,
+          thread_id: result.thread_id ?? null,
+          answer: result.answer ?? null,
+          reasoning: result.reasoning ?? null,
+          error: result.answer ?? "Upstream request failed.",
+        },
+        { status: upstream.status },
+      );
+    }
+
+    if (useStream && result.status === "running" && result.task_id) {
+      return NextResponse.json({
+        task_id: result.task_id,
+        thread_id: result.thread_id ?? null,
+        status: "running",
+        stream: true,
+      });
+    }
+
     const normalized = {
       task_id: result.task_id ?? null,
       thread_id: result.thread_id ?? null,
@@ -83,7 +109,7 @@ export async function POST(request: Request) {
       reasoning: result.reasoning ?? null,
       success: result.success ?? null,
       routing: result.routing ?? null,
-      error: !upstream.ok ? result.answer ?? "Upstream request failed." : undefined,
+      stream: false,
     };
 
     return NextResponse.json(normalized, { status: upstream.status });

@@ -1,36 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Movie Apex Frontend
 
-## Getting Started
+Next.js chat UI for [movie-agentic-rag](https://github.com) with **webhook-driven agent progress**.
 
-First, run the development server:
+## Webhook flow
+
+1. Browser `POST /api/chat` with `stream: true` → backend returns `{ task_id, status: "running" }`.
+2. Browser opens `EventSource` on `/api/chat/stream?task_id=...`.
+3. Render backend pushes steps to `POST /api/movie-webhook` (configure on the API service):
+
+   ```env
+   WEBHOOK_URL=https://movieapex.space/api/movie-webhook
+   ```
+
+4. Webhook handler fans out events to the SSE subscriber; the UI shows **Agent progress** (node + reasoning) then the final answer.
+
+## Environment
+
+Copy `.env.example` to `.env.local`:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+MOVIE_BACKEND_URL=https://movie-agentic-rag.onrender.com/movie/query
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Optional `WEBHOOK_SECRET` — if set, the movie backend must send the same value in header `X-Webhook-Secret` (add on the API if you extend it).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Local development
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm install
+npm run dev
+```
 
-## Learn More
+For local end-to-end webhook testing, expose the Next app (e.g. `ngrok http 3000`) and set Render `WEBHOOK_URL` to `https://<tunnel>/api/movie-webhook`.
 
-To learn more about Next.js, take a look at the following resources:
+## API routes
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/chat` | POST | Start query (`stream: true` by default) |
+| `/api/chat/stream` | GET | SSE progress for `task_id` |
+| `/api/movie-webhook` | POST | Receives backend webhook callbacks |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Deploy (Vercel)
 
-## Deploy on Vercel
+Set `MOVIE_BACKEND_URL` in project settings. On Render, set `WEBHOOK_URL` to `https://<your-domain>/api/movie-webhook` and redeploy the backend.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+**Note:** Progress uses an in-memory hub on the Next.js server. It works on a single instance; for multi-region/serverless you may need Redis or similar later.
