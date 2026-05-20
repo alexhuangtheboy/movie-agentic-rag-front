@@ -1,19 +1,18 @@
 "use client";
 
 import { Mail } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+
+import {
+  appendStreamingAssistantPlaceholder,
+  createMessageId,
+  failStreamingAssistant,
+  finalizeStreamingAssistant,
+  type ChatMessage,
+  upsertStreamingAssistant,
+} from "@/lib/chat-stream";
 
 type ViewMode = "landing" | "chat";
-
-type ChatMessage = {
-  role: "user" | "assistant" | "system";
-  content: string;
-};
-
-type ThinkingStep = {
-  node: string | null;
-  reasoning: string;
-};
 
 type ChatApiResponse = {
   task_id?: string;
@@ -147,7 +146,7 @@ function ChatView({
   chatHistory,
   setChatHistory,
 }: ChatViewProps) {
-  const [thinkingSteps, setThinkingSteps] = useState<ThinkingStep[]>([]);
+  const chatPanelRef = useRef<HTMLDivElement | null>(null);
 
   const historyMessages = useMemo(
     () =>
@@ -158,19 +157,13 @@ function ChatView({
     [chatHistory],
   );
 
-  const appendThinkingStep = (node: string | null, reasoning: string | null) => {
-    const text = reasoning?.trim();
-    if (!text) {
+  useEffect(() => {
+    const panel = chatPanelRef.current;
+    if (!panel) {
       return;
     }
-    setThinkingSteps((prev) => {
-      const last = prev[prev.length - 1];
-      if (last && last.node === node && last.reasoning === text) {
-        return prev;
-      }
-      return [...prev, { node, reasoning: text }];
-    });
-  };
+    panel.scrollTop = panel.scrollHeight;
+  }, [chatHistory, isLoading]);
 
   const submitChatQuery = async (rawQuery: string) => {
     const query = rawQuery.trim();
@@ -180,8 +173,12 @@ function ChatView({
 
     setInput("");
     setIsLoading(true);
-    setThinkingSteps([]);
-    setChatHistory((prev) => [...prev, { role: "user", content: query }]);
+    setChatHistory((prev) =>
+      appendStreamingAssistantPlaceholder([
+        ...prev,
+        { id: createMessageId(), role: "user", content: query },
+      ]),
+    );
 
     const streamRef: { source: EventSource | null } = { source: null };
 
@@ -209,7 +206,7 @@ function ChatView({
             : typeof data.answer === "string" && data.answer.trim()
               ? data.answer
               : FALLBACK_ERROR;
-        setChatHistory((prev) => [...prev, { role: "system", content: message }]);
+        setChatHistory((prev) => failStreamingAssistant(prev, message));
         return;
       }
 
@@ -224,7 +221,15 @@ function ChatView({
             try {
               const payload = JSON.parse(messageEvent.data) as StreamEvent;
               if (payload.type === "step") {
-                appendThinkingStep(payload.node, payload.reasoning);
+                const reasoning = payload.reasoning?.trim();
+                if (reasoning) {
+                  setChatHistory((prev) =>
+                    upsertStreamingAssistant(prev, {
+                      content: reasoning,
+                      stepLabel: formatNodeLabel(payload.node),
+                    }),
+                  );
+                }
                 return;
               }
               if (payload.type === "completed") {
@@ -232,9 +237,9 @@ function ChatView({
                 streamRef.source = null;
                 const answer = payload.answer?.trim() ?? "";
                 if (answer && payload.success !== false) {
-                  setChatHistory((prev) => [...prev, { role: "assistant", content: answer }]);
+                  setChatHistory((prev) => finalizeStreamingAssistant(prev, { content: answer }));
                 } else {
-                  setChatHistory((prev) => [...prev, { role: "system", content: FALLBACK_ERROR }]);
+                  setChatHistory((prev) => failStreamingAssistant(prev, FALLBACK_ERROR));
                 }
                 resolve();
                 return;
@@ -243,7 +248,7 @@ function ChatView({
                 source.close();
                 streamRef.source = null;
                 const message = payload.answer?.trim() || payload.reasoning?.trim() || FALLBACK_ERROR;
-                setChatHistory((prev) => [...prev, { role: "system", content: message }]);
+                setChatHistory((prev) => failStreamingAssistant(prev, message));
                 resolve();
               }
             } catch {
@@ -259,14 +264,12 @@ function ChatView({
             reject(new Error("Lost connection to progress stream"));
           };
         }).catch(() => {
-          setChatHistory((prev) => [
-            ...prev,
-            {
-              role: "system",
-              content:
-                "Lost live progress stream. Ensure Render WEBHOOK_URL is https://movieapex.space/api/movie-webhook and redeploy both services.",
-            },
-          ]);
+          setChatHistory((prev) =>
+            failStreamingAssistant(
+              prev,
+              "Lost live progress stream. Ensure Render WEBHOOK_URL is https://movieapex.space/api/movie-webhook and redeploy both services.",
+            ),
+          );
         });
 
         return;
@@ -276,15 +279,12 @@ function ChatView({
       const isSuccess = data.status === "completed" && data.success !== false && hasAnswer;
 
       if (isSuccess) {
-        if (data.reasoning?.trim()) {
-          appendThinkingStep("agent", data.reasoning);
-        }
-        setChatHistory((prev) => [...prev, { role: "assistant", content: data.answer as string }]);
+        setChatHistory((prev) => finalizeStreamingAssistant(prev, { content: data.answer as string }));
       } else {
-        setChatHistory((prev) => [...prev, { role: "system", content: FALLBACK_ERROR }]);
+        setChatHistory((prev) => failStreamingAssistant(prev, FALLBACK_ERROR));
       }
     } catch {
-      setChatHistory((prev) => [...prev, { role: "system", content: FALLBACK_ERROR }]);
+      setChatHistory((prev) => failStreamingAssistant(prev, FALLBACK_ERROR));
     } finally {
       streamRef.source?.close();
       setIsLoading(false);
@@ -363,47 +363,29 @@ function ChatView({
             </>
           )}
 
-          {(isLoading || thinkingSteps.length > 0) && (
-            <div
-              className="mb-4 w-full max-w-[860px] rounded-2xl border border-neon/25 bg-black/40 p-4 backdrop-blur-sm"
-              aria-live="polite"
-            >
-              <p className="mb-3 font-mono text-xs uppercase tracking-wide text-neon">Agent progress</p>
-              <ol className="flex max-h-48 flex-col gap-2 overflow-y-auto">
-                {thinkingSteps.length === 0 ? (
-                  <li className="font-mono text-sm text-cream/60">Waiting for webhook updates from the movie agent…</li>
-                ) : (
-                  thinkingSteps.map((step, index) => (
-                    <li
-                      key={`${step.node ?? "step"}-${index}`}
-                      className="rounded-lg bg-white/5 px-3 py-2 text-sm text-cream/85"
-                      style={{ fontFamily: "var(--font-noto-sans)" }}
-                    >
-                      <span className="mb-1 block font-mono text-[11px] uppercase text-neon/90">
-                        {formatNodeLabel(step.node)}
-                      </span>
-                      {step.reasoning}
-                    </li>
-                  ))
-                )}
-              </ol>
-            </div>
-          )}
-
           {hasConversation && (
-            <div className="chat-panel mb-6 flex w-full max-w-[860px] flex-col gap-4 rounded-2xl p-4 sm:p-5">
-              {chatHistory.map((message, index) => (
+            <div
+              ref={chatPanelRef}
+              className="chat-panel mb-6 flex max-h-[min(60vh,520px)] w-full max-w-[860px] flex-col gap-4 overflow-y-auto rounded-2xl p-4 sm:p-5"
+            >
+              {chatHistory.map((message) => (
                 <div
-                  key={`${message.role}-${index}`}
+                  key={message.id}
                   className={`max-w-[85%] rounded-2xl px-4 py-3 text-[15px] sm:text-base ${
                     message.role === "user"
                       ? "self-end bg-neon font-medium text-black shadow-[0_4px_16px_rgba(111,255,0,0.25)]"
                       : message.role === "assistant"
-                        ? ASSISTANT_BUBBLE_CLASS[ASSISTANT_BUBBLE_VARIANT]
+                        ? `${ASSISTANT_BUBBLE_CLASS[ASSISTANT_BUBBLE_VARIANT]}${message.phase === "streaming" ? " animate-pulse" : ""}`
                         : "self-center bg-red-950/80 font-medium text-red-100 backdrop-blur-sm"
                   }`}
                   style={{ fontFamily: "var(--font-noto-sans)" }}
+                  aria-live={message.phase === "streaming" ? "polite" : undefined}
                 >
+                  {message.role === "assistant" && message.phase === "streaming" && message.stepLabel ? (
+                    <span className="mb-2 block font-mono text-[11px] uppercase tracking-wide text-cream/55">
+                      {message.stepLabel}
+                    </span>
+                  ) : null}
                   {message.content}
                 </div>
               ))}
